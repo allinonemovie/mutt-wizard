@@ -10,11 +10,12 @@ The mutt-wizard is all of this in a simple ncurses menu. It's really just a litt
 
 The system takes an email and autodetect its server settings, generating a muttrc and offlineimaprc profile automatically. If it can't do so, it simply prompts you for these (which you can easily look up) and will put them all in the right places. You get:
 
-+ Automatic configuration of mutt and offlineimap
-+ Automatic encryption and safe storage of passwords which are used by mutt and offlineimap when necessary
++ Automatic configuration of mutt and offlineimap.
++ Automatic encryption and safe storage of passwords which are used by mutt and offlineimap when necessary.
 + Multiple account management in mutt: jump from account to account with the `i` prefix in mutt: `i1`: first email account, `i5`: fifth, etc.
 + Easy movement to mail folders in mutt: `gi`: go to inbox, `gs` to sent mail, `ga` to archive, `gS` to spam, `gd` to drafts, etc.
 + Some default controls and colors. This system is going to be integrated into my [public auto-rice script](https://larbs.xyz) so I want it to look pretty and be usable out the box.
++ An optional autosync script that will smartly run offlineimap when connected to the internet at what interval you want and will notify you with a ding when new mail arrives.
 
 ### Will it work on my email? (95% yes)
 
@@ -26,15 +27,27 @@ Note also that Gmail and some providers require you to enable sign-ins from thir
 
 ## Installation and Dependencies
 
-dialog, neomutt and offlineimap should be installed. The contents of this repo should go directly in `~/.config/mutt/` and run from there. You also need to have a GPG public/private key pair for the wizard to automatically store your passwords. Otherwise you'll have to store them insecurely in plaintext files without the help of the wizard.
+`dialog`, `neomutt` and `offlineimap` should be installed. You also need to have a GPG public/private key pair for the wizard to automatically store your passwords. The whole repo should be cloned to `~/.config/mutt/`. (If you have a previous mutt folder, you'll want to back it up or delete it first.)
 
-Just run `mutt-wizard.sh` for all the options, to install an account:
+```
+git clone https://github.com/LukeSmithxyz/mutt-wizard.git ~/.config/mutt
+```
 
-* First, select the "Add an account" option and give the script your account information.
-* Second, in a separate terminal, start your mail sync by running `offlineimap` or `offlineimap -a <your account name>`. This will start downloading all your mail for offline access.
-* Third, once your mailbox has started to download, reenter the script and select the "Auto-detect mailboxes" open. This will finalize the install and let you open up mutt to see your mail.
+You will want to delete or rename your current `~/.offlineimaprc` as well, as although you can later modify the `~/.offlineimaprc` produced by the script, you must have no file there the first time you add your first account or the wizard will assume some settings are already set which aren't.
 
-Whenever you want to check for mail, just run the `offlineimap` command again.
+Just run `mutt-wizard.sh` and choose to add an account. After you do so, you may run `offlineimap` to begin the mailsync, and you will be able to run neomutt and see your mail.
+
+### Non-essential dependencies
+
+The automatically deployed configs will look for certain programs for certain extra abilities. Consider installing the following for the extra functionality.
+
++ `urlview` -- Detecting and following links with `ctrl-u`
++ `mupdf` -- for viewing attached pdfs (`v` to view attachments, then select .pdf)
++ `notmuch` -- for mail searching and indexing set to `ctrl-f`. Be sure to run `notmuch setup`. Remember your mail is in `~/.mail/` when you configure notmuch.
++ `w3m` and/or `w3mimg` -- for viewing images. Like .pdfs, view in the attachments menu.
++ A cron manager if you want the autosync feature.
++ `iproute2mac` for Mac users who want the autosync feature.
++ `mpv` if you want the autosync feature to notify you with a ding on new mail.
 
 ### "Wait? The script asks for my passwords?"
 

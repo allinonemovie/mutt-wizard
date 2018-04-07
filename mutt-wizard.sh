@@ -1,13 +1,41 @@
 #!/bin/bash
 
+if [[ "$(uname)" == "Darwin" ]]
+then
+	os=".macos"
+else
+	os=""
+fi
+
 muttdir="$HOME/.config/mutt/"
+
+createMailboxes() { rm -f /tmp/log /tmp/lognew
+	offlineimap --info -a $1 2&> /tmp/log
+	sed -n '/^Folderlist/,/^Folderlist/p' /tmp/log |
+		grep "^ " | sed -e "s/\//./g;s/(.*//g;s/^ //g" > /tmp/lognew
+	while read box; do mkdir -p "$HOME/.mail/$1/$box"; done </tmp/lognew ;}
+
+chooseSync() { (crontab -l && testSync) || dialog --msgbox "No cronjob manager detected. Please install one and return to enable automatic mailsyncing" 10 60 ;}
+testSync() { (crontab -l | grep .config/mutt/etc/mailsync && removeSync) || addSync ;}
+
+addSync() { min=$(dialog --inputbox "How many minutes should be between mail syncs?" 8 60 3>&1 1>&2 2>&3 3>&-)
+	(crontab -l; echo "*/$min * * * * $HOME/.config/mutt/etc/mailsync.sh") | crontab - &&
+	dialog --msgbox "Cronjob successfully added. Remember you may need to restart or tell systemd/etc. to start your cron manager for this to take effect." 7 60 ;}
+
+removeSync() { ((crontab -l | sed -e '/.config\/mutt\/etc\/mailsync/d') | crontab - >/dev/null) && dialog --msgbox "Cronjob successfully removed. To reactivate, select this option again." 6 60 ;}
 
 changePassword() { \
 	gpgemail=$( dialog --title "Luke's mutt/offlineIMAP password wizard" --inputbox "Insert the email address with which you originally created your GPG key pair. This is NOT necessarily the email you want to configure." 10 60 3>&1 1>&2 2>&3 3>&- )
 	dialog --title "Luke's mutt/offlineIMAP password wizard" --passwordbox "Enter the new password for the \"$1\" account." 10 60 2> /tmp/$1
 	gpg2 -r $gpgemail --encrypt /tmp/$1 || (dialog --title "GPG decryption failed." --msgbox "GPG decryption failed. This is either because you do not have a GPG key pair or because your distro uses GPG1 and you thus need to symlink /usr/bin/gpg2 to /usr/bin/gpg." 7 60 && break)
 	shred -u /tmp/$1
-	mv /tmp/$1.gpg ~/.config/mutt/credentials/ ;}
+	mv /tmp/$1.gpg ~/.config/mutt/credentials/
+	dialog --title "Finalizing your account." --infobox "The account \"$title\"'s password has been changed. Now attempting to configure mail directories...
+
+	This may take several seconds..." 10 70
+	createMailboxes $title || (clear && exit)
+	detectMailboxes $title
+	dialog --title "Password changed." --msgbox "Your "$fulladdr" password has been changed. To start the download of your mail, you can manually run \`offlineimap -a $title\` in a terminal. The first sync may take some time depending on the amount of your mail." 8 60 ;}
 
 chooseDetect() { for x in $(cat ~/.offlineimaprc | grep "^accounts =" | sed -e 's/accounts =\( \)//g;s/\(,\) /\n/g;'); do detectMailboxes $x; done && detectSuccess ;}
 
@@ -36,21 +64,32 @@ formatShortcut() { \
 	echo "macro index,pager g$1 \"<change-folder>$data<enter>\" \"Go to $2.\"" >> "$muttdir"accounts/$3.muttrc
 	done ;}
 
+gen_delim() { \
+	delim="="
+	for i in `seq $(( $1 - 1 ))`
+	do
+		delim="$delim-"
+	done
+	echo $delim ;}
+
 detectMailboxes() { \
 	find ~/.mail/$1 -maxdepth 1 -mindepth 1 -type d | sed -e "s/.*\///g;s/^/=/g" > /tmp/$1_boxes
-	oneline=$(cat /tmp/$1_boxes | tr "\n" " ")
+	sidebar_width=$(sed -n -e '/^set sidebar_width/p' "$muttdir"/muttrc | awk -F'=' '{print $2}')
+	delim=$(gen_delim $sidebar_width)
+	oneline=$(cat /tmp/$1_boxes | sed -e "s/^\|$/\"/g" | tr "\n" " ")
+	oneline="=$1 $delim $oneline"
 	sed -i "/^mailboxes\|^set spoolfile\|^set record\|^set postponed/d" "$muttdir"accounts/$1.muttrc
 	echo mailboxes $oneline >> "$muttdir"accounts/$1.muttrc
 	sed -i "/^macro index,pager g/d" "$muttdir"accounts/$1.muttrc
 	grep -vi /tmp/$1_boxes -e "trash\|drafts\|sent\|trash\|spam\|junk\|archive\|chat\|old\|new\|gmail\|sms\|call" | sort -n | sed 1q | formatShortcut i inbox $1
-	grep -i /tmp/$1_boxes -e sent | formatShortcut s sent $1
-	grep -i /tmp/$1_boxes -e draft | formatShortcut d drafts $1
-	grep -i /tmp/$1_boxes -e trash | formatShortcut t trash $1
-	grep -i /tmp/$1_boxes -e spam | formatShortcut S spam $1
-	grep -i /tmp/$1_boxes -e archive | formatShortcut a archive $1
+	grep -i /tmp/$1_boxes -e sent | sed 1q | formatShortcut s sent $1
+	grep -i /tmp/$1_boxes -e draft | sed 1q | formatShortcut d drafts $1
+	grep -i /tmp/$1_boxes -e trash | sed 1q | formatShortcut t trash $1
+	grep -i /tmp/$1_boxes -e spam | sed 1q | formatShortcut S spam $1
+	grep -i /tmp/$1_boxes -e archive | sed 1q | formatShortcut a archive $1
 	spoolfile=$(grep -vi /tmp/$1_boxes -e "trash\|drafts\|sent\|trash\|spam\|junk\|archive\|chat\|old\|new\|gmail\|sms\|call" | sort -n | sed 1q | sed -e 's/=/+/g')
-	record=$(grep -i /tmp/$1_boxes -e sent | sed -e 's/=/+/g')
-	postponed=$(grep -i /tmp/$1_boxes -e draft | sed -e 's/=/+/g')
+	record=$(grep -i /tmp/$1_boxes -e sent | sed -e 's/=/+/g' | sed 1q)
+	postponed=$(grep -i /tmp/$1_boxes -e draft | sed -e 's/=/+/g' | sed 1q)
 	echo "set spoolfile = \"$spoolfile\"" >> "$muttdir"accounts/$1.muttrc
 	echo "set record = \"$record\"" >> "$muttdir"accounts/$1.muttrc
 	echo "set postponed = \"$postponed\"" >> "$muttdir"accounts/$1.muttrc ;}
@@ -86,12 +125,12 @@ removeAccount() { sed -ie "
 	rm "$muttdir"accounts/$1.muttrc
 	rm "$muttdir"credentials/$1.gpg
 	rm -rf "$muttdir"accounts/$1
-	sed -i '/$1.muttrc/d' "$muttdir"personal.muttrc ;}
+	sed -i "/$1.muttrc/d" "$muttdir"personal.muttrc ;}
 
 manual() { \
 	imap=$( dialog --inputbox "Insert the IMAP server for your email provider (excluding the port number)" 10 60 3>&1 1>&2 2>&3 3>&- )
 	iport=$(dialog --inputbox "What is your server's IMAP port number? (Usually 993)" 10 60 3>&1 1>&2 2>&3 3>&-)
-	smtpserver=$( dialog --inputbox "Insert the SMTP server for your email provider (excluding the port number)" 10 60 3>&1 1>&2 2>&3 3>&- )
+	smtp=$( dialog --inputbox "Insert the SMTP server for your email provider (excluding the port number)" 10 60 3>&1 1>&2 2>&3 3>&- )
 	sport=$( dialog --inputbox "What is your server's SMTP port number? (Usually 587 or 465)" 10 60 3>&1 1>&2 2>&3 3>&- ) ;}
 
 
@@ -109,6 +148,7 @@ EOF
 fi
 realname=$( dialog --title "Luke's mutt/offlineIMAP autoconfig" --inputbox "Enter the full name you'd like to be identified by on this email account." 10 60 3>&1 1>&2 2>&3 3>&- )
 title=$( dialog --title "Luke's mutt/offlineIMAP autoconfig" --inputbox "Give a short, one-word name for this email account that will differentiate it from other email accounts." 10 60 3>&1 1>&2 2>&3 3>&- )
+login=$(dialog --title "Luke's mutt/offlineIMAP autoconfig" --inputbox "If you have a username for the \"$title\" account which is different from your email address, enter it here. Otherwise leave this prompt blank." 10 60 3>&1 1>&2 2>&3 3>&- )
 # Sets the repo type and other variables for the sed regex.
 if [[ "$service" == "gmail.com" ]];
 	then
@@ -117,6 +157,10 @@ if [[ "$service" == "gmail.com" ]];
 	else
 		type="IMAP"
 		delet="Gmail]\/"
+fi
+if [[ -z "$login" ]];
+	then
+		login=$fulladdr
 fi
 # The replacements
 replacement="
@@ -128,8 +172,8 @@ replacement="
 	s/\$smtp/$smtp/g;
 	s/\$sport/$sport/g;
 	s/\$type/$type/g;
+	s/\$login/$login/g;
 	/$delet/d"
-
 # Gets the first unused shortcut number in the muttrc and puts it in $idnum.
 cat "$muttdir"personal.muttrc | grep i[0-9] | awk '{print $3}' | sed -e 's/i//g' > /tmp/mutt_used
 echo -e "1\n2\n3\n4\n5\n6\n7\n8\n9" > /tmp/mutt_all_possible
@@ -144,31 +188,32 @@ addAccount() {
 	shred -u /tmp/$title
 	mv /tmp/$title.gpg ~/.config/mutt/credentials/
 
+	# Adding directory structure for cache.
+	mkdir -p "$muttdir"accounts/$title/cache/bodies
+
 	# Creating the offlineimaprc if it doesn't exist already.
-	if [ ! -f ~/.offlineimaprc ]; then cp "$muttdir"autoconf/offlineimap_header ~/.offlineimaprc; fi
-	cat "$muttdir"autoconf/offlineimap_profile | sed -e "$replacement" >> ~/.offlineimaprc
+	if [ ! -f ~/.offlineimaprc ]; then cp "$muttdir"autoconf/offlineimap_header"$os" ~/.offlineimaprc; fi
+	cat "$muttdir"autoconf/offlineimap_profile"$os" | sed -e "$replacement" >> ~/.offlineimaprc
+	mkdir -p ~/.mail/$title
 
 	# Add the mutt profile.
 	cat "$muttdir"autoconf/mutt_profile | sed -e "$replacement" > "$muttdir"accounts/$title.muttrc
 	# Add a numbered shortcut in the muttrc
 	echo "macro index,pager i$idnum '<sync-mailbox><enter-command>source "$muttdir"accounts/$title.muttrc<enter><change-folder>!<enter>'" >> "$muttdir"personal.muttrc
 
-	# Adding directory structure for cache.
-	mkdir -p "$muttdir"accounts/$title/cache/bodies
-
 	# Add to offlineimaprc sync list.
-	sed -i "s/^accounts =.*[a-zA-Z]$/&, $title/g;s/^accounts =$/accounts = $title/g" ~/.offlineimaprc
+	sed -i.bu "s/^accounts =.*[a-zA-Z]$/&, $title/g;s/^accounts =\s*$/accounts = $title/g" ~/.offlineimaprc && rm ~/.offlineimaprc.bu
 
 	# Makes account default if there is no default account.
 	grep "$muttdir"personal.muttrc -e "^source .*accounts.*" >/dev/null && echo there || \
 	echo "source ${muttdir}accounts/$title.muttrc" >> "$muttdir"personal.muttrc
 
-	dialog --title "Finalizing your account." --msgbox "The account \"$title\" has been added. Now to finalize installation, do the following:
+	dialog --title "Finalizing your account." --infobox "The account \"$title\" has been added. Now attempting to configure mail directories...
 
-	1) Run offlineimap to start the sync. This will start your mail sync.
-	2) After or while running offlineimap, choose the \"autodetect mailboxes\" option, which will finalize your config files based on the directory structure of the downloaded mailbox.
-
-	After that, you will be able to open neomutt to your email account." 13 80 ;}
+	This may take several seconds..." 10 70
+	createMailboxes $title || (clear && exit)
+	detectMailboxes $title
+	dialog --title "Account added." --msgbox "Your "$fulladdr" account has been added. To start the download of your mail, you can manually run \`offlineimap -a $title\` in a terminal. The first sync may take some time depending on the amount of your mail." 8 60 ;}
 
 # This is run when a user chooses to add an account.
 chooseAdd() { \
@@ -189,14 +234,15 @@ wipe () { rm $HOME/.offlineimaprc
 while : ;
 	do
 choice=$(dialog --title "Luke's mutt/offlineIMAP wizard" --nocancel \
-	--menu "What would you like to do?" 14 45 7 \
+	--menu "What would you like to do?" 15 45 8 \
 	0 "List all email accounts configured." \
 	1 "Add an email account." \
-	2 "Auto-detect mailboxes for an account." \
-	3 "Change an account's password." \
-	4 "Remove an email account." \
-	5 "Remove all email accounts." \
-	6 "Exit this wizard." \
+	2 "Enable/disable autosync." \
+	3 "Redetect mailboxes." \
+	4 "Change an account's password." \
+	5 "Remove an email account." \
+	6 "Remove all email accounts." \
+	7 "Exit this wizard." \
 	 3>&1 1>&2 2>&3 3>&1 )
 
 case $choice in
@@ -204,10 +250,11 @@ case $choice in
 $(grep ~/.offlineimaprc -e "^accounts =" | sed 's/accounts =//g')
 " 6 60;;
 1) chooseAdd;;
-2) detectWarning && chooseDetect ;;
-3) inventory && for i in $userchoices; do changePassword $i ; done;;
-4) inventory && for i in $userchoices; do removeAccount $i ; done;;
-5) (dialog --defaultno --title "Wipe all custom neomutt/offlineIMAP settings?" --yesno "Would you like to wipe all of the mutt/offlineIMAP settings generated by the system?" 6 60 && wipe) ;;
-6) clear && break ;;
+2) chooseSync;;
+3) detectWarning && chooseDetect;;
+4) inventory && for i in $userchoices; do changePassword $i ; done;;
+5) inventory && for i in $userchoices; do removeAccount $i ; done;;
+6) (dialog --defaultno --title "Wipe all custom neomutt/offlineIMAP settings?" --yesno "Would you like to wipe all of the mutt/offlineIMAP settings generated by the system?" 6 60 && wipe) ;;
+7) clear && break ;;
 esac
 done
